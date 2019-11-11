@@ -19,23 +19,9 @@ pub enum Event {
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
 struct Pointer(usize);
-impl Pointer {
-    fn null() -> Pointer {
-        Pointer(!0)
-    }
-
-    pub fn is_null(&self) -> bool {
-        *self == Pointer::null()
-    }
-}
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
 pub struct EventHandle(Pointer);
-impl EventHandle {
-    pub fn is_null(&self) -> bool {
-        self.0 == Pointer::null()
-    }
-}
 
 pub struct EventQueue {
     events: Slab<Event>,
