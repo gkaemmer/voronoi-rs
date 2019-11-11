@@ -6,15 +6,18 @@ use std::cmp::Ordering;
 use std::ops::{Index, IndexMut};
 use crate::Site;
 use crate::math_helpers::equals_with_epsilon;
+use crate::treeprint::print;
+use std::collections::HashMap;
 
 const NULL: usize = !0;
 
+#[derive(Debug)]
 pub enum Event {
     Site(Site),
-    Vertex(crate::beachline::Pointer, f32, f32)
+    Vertex(crate::beachline::BeachSegmentHandle, f32, f32, f32)
 }
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
 struct Pointer(usize);
 impl Pointer {
     fn null() -> Pointer {
@@ -26,11 +29,18 @@ impl Pointer {
     }
 }
 
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
 pub struct EventHandle(Pointer);
+impl EventHandle {
+    pub fn is_null(&self) -> bool {
+        self.0 == Pointer::null()
+    }
+}
 
 pub struct EventQueue {
     events: Slab<Event>,
     heap: Vec<Pointer>,
+    heap_indices_by_events: HashMap<Pointer, usize>
 }
 
 // Just for convenience, so that we can type `self[i]` instead of `self.slab[i]`.
@@ -51,12 +61,12 @@ impl Ord for Event {
     fn cmp(&self, other: &Self) -> Ordering {
         let (self_x, self_y) = match self {
             Event::Site(site) => (site.x, site.y),
-            Event::Vertex(_, x, y) => (*x, *y)
+            Event::Vertex(_, x, y, _) => (*x, *y)
         };
 
         let (other_x, other_y) = match other {
             Event::Site(site) => (site.x, site.y),
-            Event::Vertex(_, x, y) => (*x, *y)
+            Event::Vertex(_, x, y, _) => (*x, *y)
         };
 
         if equals_with_epsilon(self_y, other_y) {
@@ -87,7 +97,8 @@ impl EventQueue {
     pub fn new() -> EventQueue {
         EventQueue {
             events: Slab::new(),
-            heap: Vec::new()
+            heap: Vec::new(),
+            heap_indices_by_events: HashMap::new()
         }
     }
 
@@ -95,7 +106,10 @@ impl EventQueue {
         let ptr = self.events.insert(event);
 
         self.heap.push(Pointer(ptr));
+        self.heap_indices_by_events.insert(Pointer(ptr), self.heap.len() - 1);
         self.heapify_up(self.heap.len() - 1);
+        // println!("AFTER INSERT");
+        // self.print();
         EventHandle(Pointer(ptr))
     }
 
@@ -104,13 +118,16 @@ impl EventQueue {
             return None;
         }
         let ptr = self.heap[0];
-        let event = self.events.remove(ptr.0);
         let last = self.heap.len() - 1;
         self.swap(0, last);
+        let event = self.events.remove(ptr.0);
+        self.heap_indices_by_events.remove(&ptr);
         self.heap.pop().unwrap();
         if self.heap.len() > 0 {
             self.heapify_down(0);
         }
+        // println!("AFTER POP");
+        // self.print();
         return Some(event);
     }
 
@@ -118,15 +135,28 @@ impl EventQueue {
         self.heap.len()
     }
 
-    pub fn delete(&mut self, handle: EventHandle) {
-        // TODO
+    pub fn delete(&mut self, handle: EventHandle) -> Option<Event> {
+        let ptr = handle.0;
+        let index = self.heap_indices_by_events.get(&ptr);
+        if index.is_none() { return None; }
+        let index = *index.unwrap();
+        let last = self.heap.len() - 1;
+        self.swap(index, last);
+        let event = self.events.remove(ptr.0);
+        self.heap_indices_by_events.remove(&ptr);
+        self.heap.pop().unwrap();
+        if self.heap.len() > index {
+            self.heapify_down(index);
+        }
+        // println!("AFTER DELETE");
+        // self.print();
+        return Some(event);
     }
 
     fn heapify_up(&mut self, at: usize) {
         // Element at i is potentially smaller than element at parent(i)
         let parent = self.parent(at);
         if parent != NULL && self[self.heap[at]] < self[self.heap[parent]] {
-            println!("Swapping up");
             self.swap(at, parent);
             self.heapify_up(parent)
         }
@@ -134,14 +164,13 @@ impl EventQueue {
 
     fn heapify_down(&mut self, at: usize) {
         // Element at i is potentially greater than one of its children
-        let event = &self[self.heap[at]];
         let left = self.left(at);
         let right = self.right(at);
         let mut smallest = at;
-        if left != NULL && self[self.heap[left]] < *event {
+        if left != NULL && self[self.heap[left]] < self[self.heap[smallest]] {
             smallest = left;
         }
-        if right != NULL && self[self.heap[right]] < *event {
+        if right != NULL && self[self.heap[right]] < self[self.heap[smallest]] {
             smallest = right;
         }
         if smallest != at {
@@ -162,7 +191,7 @@ impl EventQueue {
 
     fn right(&self, i: usize) -> usize {
         if i == NULL { return NULL; }
-        let child = 2*i + 1;
+        let child = 2*i + 2;
         if self.heap.len() > child {
             child
         } else {
@@ -177,7 +206,28 @@ impl EventQueue {
 
     fn swap(&mut self, i: usize, j: usize) {
         let temp = self.heap[i];
+        self.heap_indices_by_events.insert(self.heap[i], j);
+        self.heap_indices_by_events.insert(self.heap[j], i);
         self.heap[i] = self.heap[j];
         self.heap[j] = temp;
+    }
+
+    fn print(&self) {
+        if self.len() < 1 { return; }
+        print(0 as usize, |i| {
+            let left = self.left(*i);
+            if left == NULL { None } else { Some(left) }
+        }, |i| {
+            let right = self.right(*i);
+            if right == NULL { None } else { Some(right) }
+        }, |i| self.index_to_string(*i));
+    }
+
+    fn index_to_string(&self, i: usize) -> String {
+        let event = &self[self.heap[i]];
+        match *event {
+            Event::Site(site) => format!("S:{}", site.y),
+            Event::Vertex(_, _, y, _) => format!("V:{}", y)
+        }
     }
 }

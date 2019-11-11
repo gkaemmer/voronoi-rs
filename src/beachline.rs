@@ -1,18 +1,19 @@
 extern crate slab;
-use std::collections::VecDeque;
 use std::ops::{Index, IndexMut};
 use std::cmp::Ordering;
+use crate::Site;
+use crate::treeprint::print;
 
 use slab::Slab;
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
-pub enum Color {
+enum Color {
     RED,
     BLACK
 }
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub struct Pointer(usize);
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
+struct Pointer(usize);
 impl Pointer {
     fn null() -> Pointer {
         Pointer(!0)
@@ -23,52 +24,60 @@ impl Pointer {
     }
 }
 
-pub struct BeachLine<T> {
-    nodes: Slab<Node<T>>,
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
+pub struct BeachSegmentHandle(Pointer);
+impl BeachSegmentHandle {
+    pub fn is_null(&self) -> bool {
+        self.0 == Pointer::null()
+    }
+}
+
+pub struct BeachLine {
+    nodes: Slab<Node>,
     root: Pointer
 }
 
 // Note: this is only public because of the implementation of the `Index` trait
 // which is useful for private use here. There's no way to have the
 // implementation of that trait be private to this module.
-pub struct Node<T> {
+pub struct Node {
     color: Color,
     parent: Pointer,
     left: Pointer,
     right: Pointer,
-    value: T
+    value: Site
 }
 
 // Just for convenience, so that we can type `self[i]` instead of `self.slab[i]`.
-impl<T> IndexMut<Pointer> for BeachLine<T> {
-    fn index_mut(&mut self, index: Pointer) -> &mut Node<T> {
+impl IndexMut<Pointer> for BeachLine {
+    fn index_mut(&mut self, index: Pointer) -> &mut Node {
         &mut self.nodes[index.0]
     }
 }
-impl<T> Index<Pointer> for BeachLine<T> {
-    type Output = Node<T>;
+impl Index<Pointer> for BeachLine {
+    type Output = Node;
 
-    fn index(&self, index: Pointer) -> &Node<T> {
+    fn index(&self, index: Pointer) -> &Node {
         &self.nodes[index.0]
     }
 }
 
-impl<T> BeachLine<T> {
-    pub fn new() -> BeachLine<T> {
+impl BeachLine {
+    pub fn new() -> BeachLine {
         BeachLine {
             nodes: Slab::new(),
             root: Pointer::null()
         }
     }
 
-    pub fn with_capacity(n: usize) -> BeachLine<T> {
+    pub fn with_capacity(n: usize) -> BeachLine {
         BeachLine {
             nodes: Slab::with_capacity(n),
             root: Pointer::null()
         }
     }
 
-    pub fn init(&mut self, value: T) {
+    pub fn init(&mut self, value: Site) {
         if !self.root.is_null() {
             panic!("Tried initializing a non-empty beachline");
         }
@@ -82,36 +91,40 @@ impl<T> BeachLine<T> {
         self.insert_repair(self.root);
     }
 
-    pub fn get(&self, at: Pointer) -> &T {
-        &self[at].value
+    pub fn get(&self, handle: BeachSegmentHandle) -> &Site {
+        &self[handle.0].value
     }
 
-    pub fn insert_after(&mut self, at: Pointer, value: T) -> Pointer {
+    pub fn insert_after(&mut self, handle: BeachSegmentHandle, value: Site) -> BeachSegmentHandle {
+        let at = handle.0;
         if self[at].right.is_null() {
-            self[at].right = Pointer(self.nodes.insert(BeachLine::create_node(value, at)));
+            let ptr = Pointer(self.nodes.insert(BeachLine::create_node(value, at)));
+            self[at].right = ptr;
             self.insert_repair(self[at].right);
-            self[at].right
+            BeachSegmentHandle(ptr)
         } else {
-            let successor = self.successor(at);
-            self.insert_before(successor, value)
+            let successor = self.successor_inner(at);
+            self.insert_before(BeachSegmentHandle(successor), value)
         }
     }
 
-    pub fn insert_before(&mut self, at: Pointer, value: T) -> Pointer {
+    pub fn insert_before(&mut self, handle: BeachSegmentHandle, value: Site) -> BeachSegmentHandle {
+        let at = handle.0;
         if self[at].left.is_null() {
-            self[at].left = Pointer(self.nodes.insert(BeachLine::create_node(value, at)));
+            let ptr = Pointer(self.nodes.insert(BeachLine::create_node(value, at)));
+            self[at].left = ptr;
             self.insert_repair(self[at].left);
-            self[at].left
+            BeachSegmentHandle(ptr)
         } else {
-            let predecessor = self.predecessor(at);
-            self.insert_after(predecessor, value)
+            let predecessor = self.predecessor_inner(at);
+            self.insert_after(BeachSegmentHandle(predecessor), value)
         }
     }
 
-    pub fn search<F>(&self, comparator: F) -> Pointer where F: Fn(Pointer) -> Ordering {
+    pub fn search<F>(&self, comparator: F) -> BeachSegmentHandle where F: Fn(BeachSegmentHandle) -> Ordering {
         let mut current_node = self.root;
         while !current_node.is_null() {
-            let result = comparator(current_node);
+            let result = comparator(BeachSegmentHandle(current_node));
             match result {
                 Ordering::Less => {
                     // Go left
@@ -123,22 +136,23 @@ impl<T> BeachLine<T> {
                 }
                 Ordering::Equal => {
                     // We found it
-                    return current_node;
+                    return BeachSegmentHandle(current_node);
                 }
             }
         }
-        return Pointer::null();
+        return BeachSegmentHandle(Pointer::null());
     }
 
-    pub fn delete(&mut self, at: Pointer) -> Option<T> {
+    pub fn delete(&mut self, handle: BeachSegmentHandle) -> Option<Site> {
+        let at = handle.0;
         if at.is_null() { return None; }
 
         if !self[at].left.is_null() && !self[at].right.is_null() {
             // Node has two children,
             // Replace this node with its predecessor and delete its predecessor
-            let predecessor = self.predecessor(at);
+            let predecessor = self.predecessor_inner(at);
             self.swap(predecessor, at);
-            return self.delete(at);
+            return self.delete(handle);
         } else if self[at].left.is_null() && self[at].right.is_null() {
             // Node has no children
             let parent = self[at].parent;
@@ -197,7 +211,15 @@ impl<T> BeachLine<T> {
         return Some(node.value);
     }
 
-    pub fn predecessor(&self, at: Pointer) -> Pointer {
+    pub fn predecessor(&self, handle: BeachSegmentHandle) -> BeachSegmentHandle {
+        return BeachSegmentHandle(self.predecessor_inner(handle.0));
+    }
+
+    pub fn successor(&self, handle: BeachSegmentHandle) -> BeachSegmentHandle {
+        return BeachSegmentHandle(self.successor_inner(handle.0));
+    }
+
+    fn predecessor_inner(&self, at: Pointer) -> Pointer {
         if at.is_null() {
             return Pointer::null();
         }
@@ -227,7 +249,7 @@ impl<T> BeachLine<T> {
         }
     }
 
-    pub fn successor(&self, at: Pointer) -> Pointer {
+    fn successor_inner(&self, at: Pointer) -> Pointer {
         if at.is_null() {
             return Pointer::null();
         }
@@ -337,7 +359,7 @@ impl<T> BeachLine<T> {
         }
     }
 
-    fn create_node(value: T, parent: Pointer) -> Node<T> {
+    fn create_node(value: Site, parent: Pointer) -> Node {
         Node {
             color: Color::RED,
             parent: parent,
@@ -566,8 +588,8 @@ impl<T> BeachLine<T> {
         }
     }
 
-    pub fn in_order<F>(&self, mut f: F) where F: FnMut(&T) -> () {
-        fn in_order_at<F, T>(tree: &BeachLine<T>, f: &mut F, at: Pointer) where F: FnMut(&T) -> () {
+    pub fn in_order<F>(&self, mut f: F) where F: FnMut(&Site) -> () {
+        fn in_order_at<F>(tree: &BeachLine, f: &mut F, at: Pointer) where F: FnMut(&Site) -> () {
             if at.is_null() {
                 return;
             }
@@ -581,7 +603,7 @@ impl<T> BeachLine<T> {
     }
 
     pub fn depth(&self) -> usize {
-        fn depth_inner<T>(tree: &BeachLine<T>, at: Pointer, depth: usize) -> usize {
+        fn depth_inner(tree: &BeachLine, at: Pointer, depth: usize) -> usize {
             if at.is_null() {
                 return depth;
             }
@@ -594,124 +616,19 @@ impl<T> BeachLine<T> {
         depth_inner(self, self.root, 0)
     }
 
-    pub fn print<F>(&self, to_string: F) where F: Fn(&T) -> String {
-        #[derive(Debug)]
-        struct NodePrintData {
-            space_left: i32,
-            space_right: i32,
-            bar_left_width: i32,
-            bar_right_width: i32,
-            node_width: i32,
-            node_value: Box<String>,
-            node_color: Color,
-            children_count: i32,
-            left: Box<Option<NodePrintData>>,
-            right: Box<Option<NodePrintData>>
-        }
-
-        fn merge_node_print_data<F, T>(left: NodePrintData, right: NodePrintData, node: &Node<T>, to_string: &F) -> NodePrintData where F: Fn(&T) -> String {
-            let value = to_string(&node.value);
-            return NodePrintData {
-                space_left: left.space_left + left.node_width + left.space_right,
-                space_right: right.space_left + right.node_width + right.space_right,
-                bar_left_width: left.space_right,
-                bar_right_width: right.space_left,
-                node_width: 2 + value.len() as i32,
-                node_value: Box::new(value),
-                node_color: node.color,
-                children_count: left.children_count + right.children_count + 1,
-                left: Box::new(Some(left)),
-                right: Box::new(Some(right))
-            };
-        }
-
-        fn node_print_data_from_tree<F, T>(tree: &BeachLine<T>, at: Pointer, to_string: &F, depth: usize) -> NodePrintData where F: Fn(&T) -> String {
-            if at == Pointer::null() || depth > 6 {
-                NodePrintData {
-                    space_left: 0,
-                    space_right: 0,
-                    bar_left_width: 0,
-                    bar_right_width: 0,
-                    node_width: 0,
-                    node_value: Box::new(String::from("")),
-                    node_color: Color::BLACK,
-                    children_count: 0,
-                    left: Box::new(None),
-                    right: Box::new(None)
-                }
-            } else {
-                let left_node_print_data = node_print_data_from_tree(tree, tree[at].left, to_string, depth + 1);
-                let right_node_print_data = node_print_data_from_tree(tree, tree[at].right, to_string, depth + 1);
-                let node_print_data = merge_node_print_data(left_node_print_data, right_node_print_data, &tree[at], to_string);
-                return node_print_data;
+    pub fn print(&self) {
+        print(self.root, |at| {
+            let left = self[*at].left;
+            if left.is_null() { None } else { Some(left) }
+        }, |at| {
+            let right = self[*at].right;
+            if right.is_null() { None } else { Some(right) }
+        }, |at| {
+            let node = &self[*at];
+            match node.color {
+                Color::BLACK => format!("B:{}", node.value.id),
+                Color::RED => format!("R:{}", node.value.id),
             }
-        }
-
-        fn print_repeat(c: char, count: i32) {
-            for _ in 0..(count) {
-                print!("{}", c);
-            }
-        }
-
-        fn print_node_print_data(node_print_data: &NodePrintData) {
-            print_repeat(' ', node_print_data.space_left - node_print_data.bar_left_width);
-            if node_print_data.bar_left_width > 0 {
-                print!("\x08.");
-            }
-            print_repeat('-', node_print_data.bar_left_width);
-            print!("{}", match node_print_data.node_color {
-                Color::RED => "R:",
-                Color::BLACK => "B:"
-            });
-            print!("{}", *node_print_data.node_value);
-            print_repeat('-', node_print_data.bar_right_width);
-            if node_print_data.bar_right_width > 0 {
-                print!("\x08.");
-            }
-            print_repeat(' ', node_print_data.space_right - node_print_data.bar_right_width);
-        }
-
-        let node_print_data = node_print_data_from_tree(self, self.root, &to_string, 0);
-
-        // Breadth first tree traversal to print tree
-
-        let mut queue: VecDeque<(i32, i32, NodePrintData)> = VecDeque::with_capacity(node_print_data.children_count as usize);
-        let mut current_depth = 0;
-        let mut current_x = 0;
-
-        queue.push_back((0, 0, node_print_data));
-
-        while queue.len() > 0 {
-            let (depth, x, current_node) = queue.pop_front().unwrap();
-            if depth > current_depth {
-                print!("\n");
-                current_depth = depth;
-                current_x = 0;
-            }
-            print_repeat(' ', x - current_x);
-            current_x = x;
-            print_node_print_data(&current_node);
-            match *current_node.left {
-                Some(node_print_data) => {
-                    if node_print_data.node_width > 0 {
-                        // Don't pad left nodes
-                        queue.push_back((depth + 1, current_x, node_print_data));
-                    }
-                }
-                _ => {}
-            }
-            current_x += current_node.space_left + current_node.node_width;
-            match *current_node.right {
-                Some(node_print_data) => {
-                    if node_print_data.node_width > 0 {
-                        // Add node_width of padding before right node
-                        queue.push_back((depth + 1, current_x, node_print_data));
-                    }
-                }
-                _ => {}
-            }
-            current_x += current_node.space_right;
-        }
-        print!("\n");
+        });
     }
 }
