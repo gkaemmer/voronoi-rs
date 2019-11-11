@@ -158,13 +158,14 @@ impl BeachLine {
             let parent = self[at].parent;
             if !parent.is_null() {
                 // Node is not root, so properly update its parent
-                if self[parent].color == Color::BLACK && self[at].color == Color::BLACK {
+                if self[at].color == Color::BLACK {
                     // We're gonna end up invalidating the RB tree, repair it
                     // Note that if either parent or node are red, we end up with
                     // just a black node which is a valid replacement
                     self.delete_repair(at);
                 }
 
+                let parent = self[at].parent;
                 if self[parent].left == at {
                     self[parent].left = Pointer::null();
                 } else {
@@ -439,7 +440,11 @@ impl BeachLine {
             // to cases 4, 5, and 6.
             self[sibling].color = Color::BLACK;
             self[parent].color = Color::RED;
-            self.rotate_left(parent);
+            if is_left {
+                self.rotate_left(parent);
+            } else {
+                self.rotate_right(parent);
+            }
             sibling = self.sibling(at);
             parent = self[at].parent;
         } else if
@@ -469,8 +474,13 @@ impl BeachLine {
 
         if
             self[sibling].color == Color::BLACK &&
-            (!self[sibling].left.is_null() && self[self[sibling].left].color == Color::RED) &&
-            (self[sibling].right.is_null() || self[self[sibling].right].color == Color::BLACK)
+            (is_left && (
+                (!self[sibling].left.is_null() && self[self[sibling].left].color == Color::RED) &&
+                (self[sibling].right.is_null() || self[self[sibling].right].color == Color::BLACK)
+            )) || (!is_left && (
+                (!self[sibling].right.is_null() && self[self[sibling].right].color == Color::RED) &&
+                (self[sibling].left.is_null() || self[self[sibling].left].color == Color::BLACK)
+            ))
         {
             // Case 5 (depends on is_left, which we assume is true in the comment)
             // This one is weird. We rotate at sibling and swap the colors
@@ -501,11 +511,17 @@ impl BeachLine {
         self[parent].color = Color::BLACK;
         if is_left {
             let sibling_right = self[sibling].right;
-            self[sibling_right].color = Color::BLACK;
+            if !sibling_right.is_null() {
+                // Note: null is already black
+                self[sibling_right].color = Color::BLACK;
+            }
             self.rotate_left(parent);
         } else {
             let sibling_left = self[sibling].left;
-            self[sibling_left].color = Color::BLACK;
+            if !sibling_left.is_null() {
+                // Note: null is already black
+                self[sibling_left].color = Color::BLACK;
+            }
             self.rotate_right(parent);
         }
     }
