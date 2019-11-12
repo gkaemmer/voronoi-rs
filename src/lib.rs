@@ -8,7 +8,7 @@ use beachline::{BeachLine, BeachSegmentHandle};
 use eventqueue::{Event, EventQueue, EventHandle};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-pub use treeprint::print;
+use std::hash::{Hash, Hasher};
 
 // A site corresponds to an input point. They are given a unique index so that
 // they can be uniquely referenced.
@@ -17,6 +17,36 @@ pub struct Site {
     pub x: f32,
     pub y: f32,
     pub id: usize
+}
+
+pub struct Diagram {
+    edges: Vec<Edge>
+}
+
+struct SitePair(usize, usize);
+impl Hash for SitePair {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 < self.1 {
+            self.0.hash(state);
+            self.1.hash(state);
+        } else {
+            self.1.hash(state);
+            self.0.hash(state);
+        }
+    }
+}
+impl PartialEq for SitePair {
+    fn eq(&self, other: &Self) -> bool {
+        (self.0 == other.0 && self.1 == other.1) ||
+        (self.0 == other.1 && self.1 == other.0)
+    }
+}
+impl Eq for SitePair {}
+
+#[derive(Debug)]
+pub enum Edge {
+    Half(f32, f32, f32, f32), // A point and a direction (a ray)
+    Full(f32, f32, f32, f32) // Two points (x1, y1, x2, y2)
 }
 
 impl PartialEq for Site {
@@ -29,7 +59,8 @@ pub struct Voronoi {
     events: EventQueue,
     sites: Vec<Site>,
     beach: BeachLine,
-    events_by_beach_segment: HashMap<BeachSegmentHandle, EventHandle>
+    events_by_beach_segment: HashMap<BeachSegmentHandle, EventHandle>,
+    edges_by_site_pair: HashMap<SitePair, Edge>
 }
 
 impl Voronoi {
@@ -38,7 +69,8 @@ impl Voronoi {
             events: EventQueue::new(),
             sites: sites,
             beach: BeachLine::new(),
-            events_by_beach_segment: HashMap::new()
+            events_by_beach_segment: HashMap::new(),
+            edges_by_site_pair: HashMap::new()
         }
     }
 
@@ -47,7 +79,7 @@ impl Voronoi {
         voronoi.run();
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Diagram {
         for site in self.sites.iter() {
             self.events.insert(Event::Site(site.clone()));
         }
@@ -57,7 +89,7 @@ impl Voronoi {
             self.beach.init(site);
         } else {
             // No points
-            return;
+            return Diagram { edges: vec![] };
         }
 
         while self.events.len() > 0 {
@@ -116,7 +148,7 @@ impl Voronoi {
                     let left = self.beach.predecessor(middle);
                     let right = self.beach.successor(middle);
                     println!("AT TRIPLET {} {} {}", if left.is_null() { !0 } else { self.beach.get(left).id }, self.beach.get(middle).id, if right.is_null() { !0 } else { self.beach.get(right).id });
-                    self.beach.delete(middle);
+                    let middle_site = self.beach.delete(middle).unwrap();
                     self.print_beach();
                     self.delete_vertex_event(left);
                     self.delete_vertex_event(right);
@@ -126,11 +158,29 @@ impl Voronoi {
                     let vertex_x = x;
                     let vertex_y = y-rad;
                     println!("Got vertex at ({}, {})", vertex_x, vertex_y);
+
+                    let left_site = self.beach.get(left).clone();
+                    let right_site = self.beach.get(right).clone();
+
+                    // Add vertex to edges
+                    self.add_vertex_to_edge(left_site, right_site, vertex_x, vertex_y);
+                    self.add_vertex_to_edge(left_site, middle_site, vertex_x, vertex_y);
+                    self.add_vertex_to_edge(middle_site, right_site, vertex_x, vertex_y);
                 }
                 None => {
                     // Impossible
                 }
             }
+        }
+
+        let mut edges = Vec::new();
+        for (_, value) in self.edges_by_site_pair.drain() {
+            edges.push(value);
+        }
+        println!("{:?}", edges);
+
+        Diagram {
+            edges: edges
         }
     }
 
@@ -170,6 +220,24 @@ impl Voronoi {
 
         let event_handle = self.events.insert(Event::Vertex(segment, center_x, center_y + rad, rad));
         self.events_by_beach_segment.insert(segment, event_handle);
+    }
+
+    fn add_vertex_to_edge(&mut self, a: Site, b: Site, x: f32, y: f32) {
+        let new_edge = match self.edges_by_site_pair.remove(&SitePair(a.id, b.id)) {
+            Some(Edge::Half(other_x, other_y, _, _)) => {
+                Edge::Full(other_x, other_y, x, y)
+            },
+            Some(edge) => {
+                // Impossible
+                edge
+            },
+            None => {
+                let dx = b.y - a.y;
+                let dy = a.x - b.x;
+                Edge::Half(x, y, dx, dy)
+            }
+        };
+        self.edges_by_site_pair.insert(SitePair(a.id, b.id), new_edge);
     }
 
     fn print_beach(&self) {
