@@ -1,4 +1,4 @@
-const EPSILON: f32 = 1.00e-9_f32;
+const EPSILON: f64 = 1.00e-12_f64;
 
 // Returns the x coordinate of the intersection of two beach segments
 //
@@ -13,11 +13,11 @@ const EPSILON: f32 = 1.00e-9_f32;
 // -----------------------X--------------------------- directrix
 //
 
-pub fn equals_with_epsilon(a: f32, b: f32) -> bool {
+pub fn equals_with_epsilon(a: f64, b: f64) -> bool {
     return (a - b).abs() < EPSILON;
 }
 
-pub fn breakpoint_between(x1: f32, y1: f32, x2: f32, y2: f32, directrix: f32) -> f32 {
+pub fn breakpoint_between(x1: f64, y1: f64, x2: f64, y2: f64, directrix: f64) -> f64 {
     // Credit to:
     // https://www.wolframalpha.com/input/?i=solve+%28x1+-+h%29%5E2+%2B+%28y1-k%29%5E2+%3D+%28k+-+s%29%5E2%2C+%28x2+-+h%29%5E2+%2B+%28y2+-+k%29%5E2+%3D+%28k+-+s%29%5E2+for+h%2C+k
     if equals_with_epsilon(y1, y2) {
@@ -31,7 +31,7 @@ pub fn breakpoint_between(x1: f32, y1: f32, x2: f32, y2: f32, directrix: f32) ->
 
 // Finds the point equidistant to all given points, and also returns the
 // distance to that point
-pub fn find_center(x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) -> Option<(f32, f32, f32)> {
+pub fn find_center(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) -> Option<(f64, f64, f64)> {
     let temp = x2 * x2 + y2 * y2;
     let bc = (x1 * x1 + y1 * y1 - temp) / 2.0;
     let cd = (temp - x3 * x3 - y3 * y3) / 2.0;

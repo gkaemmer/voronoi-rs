@@ -14,8 +14,8 @@ use std::hash::{Hash, Hasher};
 // they can be uniquely referenced.
 #[derive(Clone, Copy, Debug)]
 pub struct Site {
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
     pub id: usize
 }
 
@@ -45,8 +45,8 @@ impl Eq for SitePair {}
 
 #[derive(Debug)]
 pub enum Edge {
-    Half(f32, f32, f32, f32), // A point and a direction (a ray)
-    Full(f32, f32, f32, f32) // Two points (x1, y1, x2, y2)
+    Half(f64, f64, f64, f64), // A point and a direction (a ray)
+    Full(f64, f64, f64, f64) // Two points (x1, y1, x2, y2)
 }
 
 impl PartialEq for Site {
@@ -104,7 +104,7 @@ impl Voronoi {
                         let site = self.beach.get(ptr);
                         let left_ptr = self.beach.predecessor(ptr);
                         let left_breakpoint = if left_ptr.is_null() {
-                            -std::f32::MAX
+                            -std::f64::MAX
                         } else {
                             let left = self.beach.get(left_ptr);
                             breakpoint_between(left.x, left.y, site.x, site.y, y)
@@ -114,7 +114,7 @@ impl Voronoi {
                         }
                         let right_ptr = self.beach.successor(ptr);
                         let right_breakpoint = if right_ptr.is_null() {
-                            std::f32::MAX
+                            std::f64::MAX
                         } else {
                             let right = self.beach.get(right_ptr);
                             breakpoint_between(site.x, site.y, right.x, right.y, y)
@@ -222,7 +222,7 @@ impl Voronoi {
         self.events_by_beach_segment.insert(segment, event_handle);
     }
 
-    fn add_vertex_to_edge(&mut self, a: Site, b: Site, x: f32, y: f32) {
+    fn add_vertex_to_edge(&mut self, a: Site, b: Site, x: f64, y: f64) {
         let new_edge = match self.edges_by_site_pair.remove(&SitePair(a.id, b.id)) {
             Some(Edge::Half(other_x, other_y, _, _)) => {
                 Edge::Full(other_x, other_y, x, y)

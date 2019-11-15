@@ -14,7 +14,7 @@ const NULL: usize = !0;
 #[derive(Debug)]
 pub enum Event {
     Site(Site),
-    Vertex(crate::beachline::BeachSegmentHandle, f32, f32, f32)
+    Vertex(crate::beachline::BeachSegmentHandle, f64, f64, f64)
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
