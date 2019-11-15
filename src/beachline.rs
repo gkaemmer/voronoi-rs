@@ -605,6 +605,7 @@ impl BeachLine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn in_order<F>(&self, mut f: F) where F: FnMut(&Site) -> () {
         fn in_order_at<F>(tree: &BeachLine, f: &mut F, at: Pointer) where F: FnMut(&Site) -> () {
             if at.is_null() {

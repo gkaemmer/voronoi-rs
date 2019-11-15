@@ -13,11 +13,13 @@ struct NodePrintData {
     right: Box<Option<NodePrintData>>
 }
 
+// Note: the _blank field is not used, but if it's not there, the compiler will
+// complain that the type field is unused.
 struct Printer<T, F1: Fn(&T) -> Option<T>, F2: Fn(&T) -> Option<T>, F3: Fn(&T) -> String> {
     get_left: F1,
     get_right: F2,
     to_string: F3,
-    blank: Option<T>
+    _blank: Option<T>
 }
 
 impl<T, F1, F2, F3> Printer<T, F1, F2, F3> where F1: Fn(&T) -> Option<T>, F2: Fn(&T) -> Option<T>, F3: Fn(&T) -> String {
@@ -136,7 +138,7 @@ pub fn print<T, F1, F2, F3>(root: T, get_left: F1, get_right: F2, to_string: F3)
         get_left,
         get_right,
         to_string,
-        blank: None
+        _blank: None
     };
 
     printer.print(root);
