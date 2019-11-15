@@ -8,3 +8,6 @@ edition = "2018"
 
 [dependencies]
 slab = "0.4.2"
+
+[dev-dependencies]
+rand = "0.7.2"
