@@ -94,7 +94,6 @@ impl EventQueue {
         self.heap.push(Pointer(ptr));
         self.heap_indices_by_events.insert(Pointer(ptr), self.heap.len() - 1);
         self.heapify_up(self.heap.len() - 1);
-        self.validate(0);
         EventHandle(Pointer(ptr))
     }
 
@@ -111,7 +110,6 @@ impl EventQueue {
         if self.heap.len() > 0 {
             self.heapify_down(0);
         }
-        self.validate(0);
         return Some(event);
     }
 
@@ -120,8 +118,6 @@ impl EventQueue {
     }
 
     pub fn delete(&mut self, handle: EventHandle) -> Option<Event> {
-        // print!("Before delete: ");
-        // self.print_simple();
         let ptr = handle.0;
         let index = self.heap_indices_by_events.get(&ptr);
         if index.is_none() { return None; }
@@ -138,7 +134,6 @@ impl EventQueue {
             self.heapify_up(index);
             // Heap property is restored
         }
-        self.validate(0);
         return Some(event);
     }
 
@@ -201,6 +196,7 @@ impl EventQueue {
         self.heap[j] = temp;
     }
 
+    #[allow(dead_code)]
     pub fn print(&self) {
         if self.len() < 1 { return; }
         print(0 as usize, |i| {
@@ -212,6 +208,7 @@ impl EventQueue {
         }, |i| self.index_to_string(*i));
     }
 
+    #[allow(dead_code)]
     pub fn print_simple(&self) {
         for i in 0..self.heap.len() {
             print!("{},", self.index_to_string(i));
@@ -227,6 +224,7 @@ impl EventQueue {
         }
     }
 
+    #[allow(dead_code)]
     fn validate(&self, at: usize) {
         let parent = self.parent(at);
         if parent != NULL && self[self.heap[at]] < self[self.heap[parent]] {

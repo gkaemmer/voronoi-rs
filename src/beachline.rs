@@ -70,6 +70,7 @@ impl BeachLine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_capacity(n: usize) -> BeachLine {
         BeachLine {
             nodes: Slab::with_capacity(n),
@@ -618,6 +619,7 @@ impl BeachLine {
         in_order_at(self, &mut f, self.root);
     }
 
+    #[allow(dead_code)]
     pub fn depth(&self) -> usize {
         fn depth_inner(tree: &BeachLine, at: Pointer, depth: usize) -> usize {
             if at.is_null() {
@@ -632,6 +634,7 @@ impl BeachLine {
         depth_inner(self, self.root, 0)
     }
 
+    #[allow(dead_code)]
     pub fn print(&self) {
         print(self.root, |at| {
             let left = self[*at].left;

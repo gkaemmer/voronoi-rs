@@ -20,7 +20,7 @@ pub struct Site {
 }
 
 pub struct Diagram {
-    edges: Vec<Edge>
+    pub edges: Vec<Edge>
 }
 
 struct SitePair(usize, usize);
@@ -74,9 +74,9 @@ impl Voronoi {
         }
     }
 
-    pub fn build(sites: Vec<Site>) {
+    pub fn build(sites: Vec<Site>) -> Diagram {
         let mut voronoi = Voronoi::new(sites);
-        voronoi.run();
+        voronoi.run()
     }
 
     pub fn run(&mut self) -> Diagram {
@@ -95,7 +95,6 @@ impl Voronoi {
         while self.events.len() > 0 {
             match self.events.pop() {
                 Some(Event::Site(site)) => {
-                    println!("AT SITE {}", site.id);
                     // Find beach segment directly above site.x
 
                     let x = site.x;
@@ -125,21 +124,14 @@ impl Voronoi {
                         Ordering::Equal
                     });
 
-                    println!("Splitting segment {}", self.beach.get(segment_to_split).id);
+                    self.delete_vertex_event(segment_to_split);
                     let left_segment = segment_to_split;
                     let middle_segment = self.beach.insert_after(segment_to_split, site);
                     let right_segment = self.beach.insert_after(middle_segment, self.beach.get(segment_to_split).clone());
-                    self.print_beach();
 
                     // Re-create vertex events for split segment
-                    self.delete_vertex_event(left_segment);
-                    self.delete_vertex_event(right_segment);
                     self.create_vertex_event(left_segment);
                     self.create_vertex_event(right_segment);
-
-                    // self.events.print_simple();
-
-                    // self.beach.print(|site| format!("{}", site.id));
                 },
                 Some(Event::Vertex(middle, x, y, rad)) => {
                     // We're at this vertex event, make sure we don't reference it again
@@ -147,25 +139,21 @@ impl Voronoi {
 
                     let left = self.beach.predecessor(middle);
                     let right = self.beach.successor(middle);
-                    println!("AT TRIPLET {} {} {}", if left.is_null() { !0 } else { self.beach.get(left).id }, self.beach.get(middle).id, if right.is_null() { !0 } else { self.beach.get(right).id });
                     let middle_site = self.beach.delete(middle).unwrap();
-                    self.print_beach();
                     self.delete_vertex_event(left);
                     self.delete_vertex_event(right);
                     self.create_vertex_event(left);
                     self.create_vertex_event(right);
-                    // self.events.print_simple();
                     let vertex_x = x;
                     let vertex_y = y-rad;
-                    println!("Got vertex at ({}, {})", vertex_x, vertex_y);
 
                     let left_site = self.beach.get(left).clone();
                     let right_site = self.beach.get(right).clone();
 
                     // Add vertex to edges
-                    self.add_vertex_to_edge(left_site, right_site, vertex_x, vertex_y);
                     self.add_vertex_to_edge(left_site, middle_site, vertex_x, vertex_y);
                     self.add_vertex_to_edge(middle_site, right_site, vertex_x, vertex_y);
+                    self.add_vertex_to_edge(right_site, left_site, vertex_x, vertex_y);
                 }
                 None => {
                     // Impossible
@@ -177,7 +165,6 @@ impl Voronoi {
         for (_, value) in self.edges_by_site_pair.drain() {
             edges.push(value);
         }
-        println!("{:?}", edges);
 
         Diagram {
             edges: edges
@@ -186,8 +173,6 @@ impl Voronoi {
 
     fn delete_vertex_event(&mut self, segment: BeachSegmentHandle) {
         if let Some(event_handle) = self.events_by_beach_segment.get(&segment) {
-            let middle_site = self.beach.get(segment);
-            println!("Deleting vertex event around {}", middle_site.id);
             self.events.delete(*event_handle);
             self.events_by_beach_segment.remove(&segment);
         }
@@ -216,8 +201,6 @@ impl Voronoi {
         if center.is_none() { return; }
         let (center_x, center_y, rad) = center.unwrap();
 
-        println!("Adding vertex event: {} {} {}", left_site.id, middle_site.id, right_site.id);
-
         let event_handle = self.events.insert(Event::Vertex(segment, center_x, center_y + rad, rad));
         self.events_by_beach_segment.insert(segment, event_handle);
     }
@@ -238,18 +221,5 @@ impl Voronoi {
             }
         };
         self.edges_by_site_pair.insert(SitePair(a.id, b.id), new_edge);
-    }
-
-    fn print_beach(&self) {
-        self.beach.in_order(|x| print!("{},", x.id));
-        println!("");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }
