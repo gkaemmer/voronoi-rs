@@ -2,13 +2,19 @@ mod math_helpers;
 mod beachline;
 mod eventqueue;
 mod treeprint;
+mod dcel;
 
 pub use math_helpers::{equals_with_epsilon, breakpoint_between, find_center};
 use beachline::{BeachLine, BeachSegmentHandle};
 use eventqueue::{Event, EventQueue, EventHandle};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use dcel::Dcel;
+
+pub struct InputSite {
+    pub x: f64,
+    pub y: f64
+}
 
 // A site corresponds to an input point. They are given a unique index so that
 // they can be uniquely referenced.
@@ -23,25 +29,8 @@ pub struct Diagram {
     pub edges: Vec<Edge>
 }
 
+#[derive(Hash, PartialEq, Eq)]
 struct SitePair(usize, usize);
-impl Hash for SitePair {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        if self.0 < self.1 {
-            self.0.hash(state);
-            self.1.hash(state);
-        } else {
-            self.1.hash(state);
-            self.0.hash(state);
-        }
-    }
-}
-impl PartialEq for SitePair {
-    fn eq(&self, other: &Self) -> bool {
-        (self.0 == other.0 && self.1 == other.1) ||
-        (self.0 == other.1 && self.1 == other.0)
-    }
-}
-impl Eq for SitePair {}
 
 #[derive(Debug)]
 pub enum Edge {
@@ -60,26 +49,32 @@ pub struct Voronoi {
     sites: Vec<Site>,
     beach: BeachLine,
     events_by_beach_segment: HashMap<BeachSegmentHandle, EventHandle>,
-    edges_by_site_pair: HashMap<SitePair, Edge>
+    edges_by_site_pair: HashMap<SitePair, Edge>,
+    dcel: Dcel,
+    halfedges_by_site_pair: HashMap<SitePair, usize>
 }
 
 impl Voronoi {
-    pub fn new(sites: Vec<Site>) -> Voronoi {
+    pub fn new(sites: Vec<InputSite>) -> Voronoi {
+        let len = sites.len();
+        let sites = sites.iter().enumerate().map(|(i, s)| Site { x: s.x, y: s.y, id: i }).collect();
         Voronoi {
             events: EventQueue::new(),
-            sites: sites,
+            sites,
             beach: BeachLine::new(),
             events_by_beach_segment: HashMap::new(),
-            edges_by_site_pair: HashMap::new()
+            edges_by_site_pair: HashMap::new(),
+            dcel: Dcel::new(len),
+            halfedges_by_site_pair: HashMap::new()
         }
     }
 
-    pub fn build(sites: Vec<Site>) -> Diagram {
-        let mut voronoi = Voronoi::new(sites);
+    pub fn build(sites: Vec<InputSite>) -> Dcel {
+        let voronoi = Voronoi::new(sites);
         voronoi.run()
     }
 
-    pub fn run(&mut self) -> Diagram {
+    pub fn run(mut self) -> Dcel {
         for site in self.sites.iter() {
             self.events.insert(Event::Site(site.clone()));
         }
@@ -89,7 +84,7 @@ impl Voronoi {
             self.beach.init(site);
         } else {
             // No points
-            return Diagram { edges: vec![] };
+            return self.dcel;
         }
 
         while self.events.len() > 0 {
@@ -132,6 +127,8 @@ impl Voronoi {
                     // Re-create vertex events for split segment
                     self.create_vertex_event(left_segment);
                     self.create_vertex_event(right_segment);
+
+                    self.create_halfedges(site, self.beach.get(segment_to_split).clone());
                 },
                 Some(Event::Vertex(middle, x, y, rad)) => {
                     // We're at this vertex event, make sure we don't reference it again
@@ -151,6 +148,30 @@ impl Voronoi {
                     let right_site = self.beach.get(right).clone();
 
                     // Add vertex to edges
+                    // Get edge id of (left, middle) edge LM and
+                    //  set LM origin to V
+                    //  set LM's twin's next to MR
+                    let lm = self.get_halfedge(left_site, middle_site);
+                    let mr = self.get_halfedge(middle_site, right_site);
+
+                    let lm_twin = self.dcel.get_twin(lm);
+                    let mr_twin = self.dcel.get_twin(mr);
+
+                    let vertex = self.dcel.create_vertex(vertex_x, vertex_y);
+
+                    let (rl, rl_twin) = self.create_halfedges(right_site, left_site);
+
+                    self.dcel.set_origin(lm_twin, vertex);
+                    self.dcel.set_origin(mr_twin, vertex);
+                    self.dcel.set_origin(rl_twin, vertex);
+
+                    self.dcel.set_next(lm, rl_twin);
+                    self.dcel.set_next(mr, lm_twin);
+                    self.dcel.set_next(rl, mr_twin);
+
+                    // Get edge id of (middle, right) edge MR and set its next to LM
+                    // Create new (right, left) edge
+
                     self.add_vertex_to_edge(left_site, middle_site, vertex_x, vertex_y);
                     self.add_vertex_to_edge(middle_site, right_site, vertex_x, vertex_y);
                     self.add_vertex_to_edge(right_site, left_site, vertex_x, vertex_y);
@@ -166,8 +187,29 @@ impl Voronoi {
             edges.push(value);
         }
 
-        Diagram {
-            edges: edges
+        // println!("{:?}", self.dcel);
+        // println!("{:?}", self.dcel.get_polygons());
+
+        self.dcel
+    }
+
+    fn create_halfedges(&mut self, left: Site, right: Site) -> (usize, usize) {
+        if let Some(_) = self.halfedges_by_site_pair.get(&SitePair(left.id, right.id)) {
+            panic!(format!("Edge already exists: {} {}", left.id, right.id));
+        }
+        let (edge, twin) = self.dcel.create_twins();
+        self.halfedges_by_site_pair.insert(SitePair(left.id, right.id), edge);
+        self.halfedges_by_site_pair.insert(SitePair(right.id, left.id), twin);
+        self.dcel.ensure_face(left.id, edge);
+        self.dcel.ensure_face(right.id, twin);
+        (edge, twin)
+    }
+
+    fn get_halfedge(&self, left: Site, right: Site) -> usize {
+        if let Some(halfedge) = self.halfedges_by_site_pair.get(&SitePair(left.id, right.id)) {
+            *halfedge
+        } else {
+            panic!("Tried getting a non-existant halfedge");
         }
     }
 

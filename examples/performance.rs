@@ -3,15 +3,14 @@ extern crate rand;
 
 use rand::prelude::*;
 use std::time::Instant;
-use voronoi::{Voronoi, Site};
+use voronoi::{Voronoi, InputSite};
 
 fn main() {
     let count = 10000;
     let mut rng = rand::thread_rng();
-    let sites: Vec<Site> = (1..count).map(|i| Site {
+    let sites: Vec<InputSite> = (0..count).map(|_i| InputSite {
         x: rng.gen(),
-        y: rng.gen(),
-        id: i
+        y: rng.gen()
     }).collect();
 
     let now = Instant::now();
