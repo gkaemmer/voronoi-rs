@@ -1,15 +1,15 @@
 extern crate voronoi;
 
-use voronoi::{Voronoi, Site};
+use voronoi::{Voronoi, InputSite};
 
 fn main() {
     let sites = vec![
-        Site { x: -1.0, y: 0.0, id: 0 },
-        Site { x: 0.0, y: 0.0, id: 1 },
-        Site { x: 1.0, y: 0.0, id: 2 },
-        Site { x: 0.0, y: 1.0, id: 3 },
-        Site { x: 0.0, y: -1.0, id: 4 },
+        InputSite { x: -1.0, y: 0.0 },
+        InputSite { x: 0.0, y: 0.0 },
+        InputSite { x: 1.0, y: 0.0 },
+        InputSite { x: 0.0, y: 1.0 },
+        InputSite { x: 0.0, y: -1.0 },
     ];
 
-    Voronoi::build(sites);
+    Voronoi::build(sites, -10., -10., 10., 10.).get_polygons();
 }

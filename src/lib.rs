@@ -9,7 +9,7 @@ use beachline::{BeachLine, BeachSegmentHandle};
 use eventqueue::{Event, EventQueue, EventHandle};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use dcel::Dcel;
+use dcel::{Dcel, BoundingBox};
 
 pub struct InputSite {
     pub x: f64,
@@ -51,11 +51,12 @@ pub struct Voronoi {
     events_by_beach_segment: HashMap<BeachSegmentHandle, EventHandle>,
     edges_by_site_pair: HashMap<SitePair, Edge>,
     dcel: Dcel,
-    halfedges_by_site_pair: HashMap<SitePair, usize>
+    halfedges_by_site_pair: HashMap<SitePair, usize>,
+    bounding_box: BoundingBox
 }
 
 impl Voronoi {
-    pub fn new(sites: Vec<InputSite>) -> Voronoi {
+    pub fn new(sites: Vec<InputSite>, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Voronoi {
         let len = sites.len();
         let sites = sites.iter().enumerate().map(|(i, s)| Site { x: s.x, y: s.y, id: i }).collect();
         Voronoi {
@@ -64,17 +65,20 @@ impl Voronoi {
             beach: BeachLine::new(),
             events_by_beach_segment: HashMap::new(),
             edges_by_site_pair: HashMap::new(),
-            dcel: Dcel::new(len),
-            halfedges_by_site_pair: HashMap::new()
+            dcel: Dcel::new(len + 4),
+            halfedges_by_site_pair: HashMap::new(),
+            bounding_box: BoundingBox::new(min_x, min_y, max_x, max_y)
         }
     }
 
-    pub fn build(sites: Vec<InputSite>) -> Dcel {
-        let voronoi = Voronoi::new(sites);
+    pub fn build(sites: Vec<InputSite>, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Dcel {
+        let voronoi = Voronoi::new(sites, min_x, min_y, max_x, max_y);
         voronoi.run()
     }
 
     pub fn run(mut self) -> Dcel {
+        self.add_boundary_sites();
+
         for site in self.sites.iter() {
             self.events.insert(Event::Site(site.clone()));
         }
@@ -190,6 +194,7 @@ impl Voronoi {
         // println!("{:?}", self.dcel);
         // println!("{:?}", self.dcel.get_polygons());
 
+        self.dcel.bound(&self.bounding_box);
         self.dcel
     }
 
@@ -263,5 +268,22 @@ impl Voronoi {
             }
         };
         self.edges_by_site_pair.insert(SitePair(a.id, b.id), new_edge);
+    }
+
+    fn add_boundary_sites(&mut self) {
+        // Add four "Boundary sites" so that all given sites have complete faces
+        let width = self.bounding_box.width();
+        let height = self.bounding_box.width();
+        let mid_x = self.bounding_box.mid_x();
+        let mid_y = self.bounding_box.mid_y();
+
+        // Left
+        self.sites.push(Site { x: mid_x - width * 5., y: mid_y, id: self.sites.len() });
+        // Right
+        self.sites.push(Site { x: mid_x + width * 5., y: mid_y, id: self.sites.len() });
+        // Top
+        self.sites.push(Site { x: mid_x, y: mid_y - height * 5., id: self.sites.len() });
+        // Bottom
+        self.sites.push(Site { x: mid_x, y: mid_y + height * 5., id: self.sites.len() });
     }
 }

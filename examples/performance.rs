@@ -14,6 +14,6 @@ fn main() {
     }).collect();
 
     let now = Instant::now();
-    Voronoi::build(sites);
+    Voronoi::build(sites, 0., 0., 1., 1.).get_polygons();
     println!("Finding voronoi diagram of {} points took {}ms", count, now.elapsed().as_millis());
 }
