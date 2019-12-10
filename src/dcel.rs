@@ -96,22 +96,23 @@ impl Dcel {
     pub fn get_polygons(&self) -> Vec<Vec<(f64, f64)>> {
         let mut polygons = Vec::with_capacity(self.faces.len());
         for face in &self.faces {
-            let mut edge = face;
+            let mut edge = *face;
             let mut polygon = Vec::new();
             loop {
-                if *edge == NIL || self.halfedges[*edge].origin == NIL {
+                if edge == NIL || self.halfedges[edge].origin == NIL {
                     break;
                 }
-                let vertex = &self.vertices[self.halfedges[*edge].origin];
+                let vertex = &self.vertices[self.halfedges[edge].origin];
                 polygon.push((vertex.x, vertex.y));
-                edge = &self.halfedges[*edge].next;
+                edge = self.halfedges[edge].next;
 
-                if *edge == *face {
+                // println!("Building {} {} ", edge, face);
+                if edge == *face {
                     break;
                 }
             }
 
-            if *edge == *face {
+            if edge == *face {
                 // We made it back to the first point, so we have a full polygon
                 polygons.push(polygon);
             } else {
@@ -131,13 +132,21 @@ impl Dcel {
             // Set STATE to INSIDE
             // For each edge.next until we're back:
             //   If STATE is INSIDE:
-            //     If segment intersects bounding box:
+            //     If segment intersects EXITING_SIDE of bounding box:
             //       Change STATE to OUTSIDE
             //       Add new vertex at intersect's x,y and name it OUT_VERTEX
+            //       Store EXITING_SIDE
             //       Store current halfedge as EXITING_EDGE
             //   If STATE is OUTSIDE:
             //     Mark current halfedge as inactive
-            //     If segment intersects with bounding box:
+            //     If segment intersects with ENTERING_SIDE of bounding box:
+            //       If ENTERING_SIDE is not equal to EXITING_SIDE:
+            //         For each corner between EXITING_SIDE and ENTERING_SIDE:
+            //           Add new vertex at corner and name it CORNER
+            //           Add a new halfedge CORNER_EDGE with origin OUT_VERTEX
+            //           Set EXITING_EDGE.next to CORNER_EDGE
+            //           Set OUT_VERTEX to CORNER
+            //           Set EXITING_EDGE to CORNER_EDGE
             //       Add new vertex at intersect's x,y and name it IN_VERTEX
             //       Add a new halfedge BBOX_EDGE with origin OUT_VERTEX
             //       Add a new halfedge ENTERING_EDGE with origin IN_VERTEX
@@ -166,6 +175,7 @@ impl Dcel {
                     should_remove_face = true;
                     break;
                 }
+                println!("Trying again to find starting edge");
             }
 
             if should_remove_face {
@@ -179,6 +189,7 @@ impl Dcel {
             let mut edge = starting_edge;
             let mut exiting_edge = NIL;
             let mut out_vertex = NIL;
+            let mut exiting_side = BoundSide::Left;
             loop {
                 if self.halfedges[edge].origin == NIL || self.halfedges[edge].next == NIL {
                     // Only bound faces that are complete
@@ -201,21 +212,48 @@ impl Dcel {
 
                 if state == 0 {
                     // State is INSIDE
-                    if let BoundResult::Intersect { x, y } = result {
+                    if let BoundResult::Intersect { x, y, side } = result {
                         state = 1; // Outside
+                        println!("Leaving at {} {}", x, y);
                         out_vertex = self.create_vertex(x, y);
                         exiting_edge = edge;
+                        exiting_side = side;
                     }
                     if result == BoundResult::Outside {
+                        println!("Inside to outside");
                         state = 1;
                         self.halfedges[edge].active = false;
                         out_vertex = self.halfedges[edge].origin;
                         exiting_edge = prev_edge;
+                        let Vertex { x, y } = self.vertices[out_vertex];
+                        exiting_side = if equals_with_epsilon(x, bbox.max_x) {
+                            BoundSide::Right
+                        } else if equals_with_epsilon(x, bbox.min_x) {
+                            BoundSide::Left
+                        } else if equals_with_epsilon(y, bbox.min_y) {
+                            BoundSide::Top
+                        } else {
+                            BoundSide::Bottom
+                        };
                     }
                 } else {
                     // State is OUTSIDE
+                    println!("Looking for entrance: {:?}", result);
                     self.halfedges[edge].active = false;
-                    if let BoundResult::Intersect { x, y } = result {
+                    if let BoundResult::Intersect { x, y, side } = result {
+                        if side != exiting_side {
+                            for (corner_x, corner_y) in corners_between(exiting_side, side, &bbox) {
+                                let corner = self.create_vertex(corner_x, corner_y);
+                                let (corner_edge, _) = self.create_twins();
+                                let exiting_edge_twin = self.halfedges[exiting_edge].twin;
+                                self.halfedges[corner_edge].origin = out_vertex;
+                                self.halfedges[exiting_edge_twin].origin = corner;
+                                self.halfedges[exiting_edge].next = corner_edge;
+                                out_vertex = corner;
+                                exiting_edge = corner_edge;
+                            }
+                        }
+                        println!("Entering at {} {}", x, y);
                         let in_vertex = self.create_vertex(x, y);
                         let (bbox_edge, bbox_edge_twin) = self.create_twins();
                         let (entering_edge, entering_edge_twin) = self.create_twins();
@@ -228,11 +266,36 @@ impl Dcel {
                         self.halfedges[entering_edge].origin = in_vertex;
                         self.halfedges[entering_edge].next = next;
                         self.halfedges[entering_edge_twin].origin = self.halfedges[next].origin;
+                        self.faces[i] = entering_edge;
                         break;
                     }
 
                     if result == BoundResult::Inside {
+                        println!("Outside to inside");
                         // Jumped inside, this is actually an easier case
+                        let in_vertex = self.halfedges[edge].origin;
+                        let Vertex { x, y } = self.vertices[in_vertex];
+                        let side = if equals_with_epsilon(x, bbox.max_x) {
+                            BoundSide::Right
+                        } else if equals_with_epsilon(x, bbox.min_x) {
+                            BoundSide::Left
+                        } else if equals_with_epsilon(y, bbox.min_y) {
+                            BoundSide::Top
+                        } else {
+                            BoundSide::Bottom
+                        };
+                        if side != exiting_side {
+                            for (corner_x, corner_y) in corners_between(exiting_side, side, &bbox) {
+                                let corner = self.create_vertex(corner_x, corner_y);
+                                let (corner_edge, _) = self.create_twins();
+                                let exiting_edge_twin = self.halfedges[exiting_edge].twin;
+                                self.halfedges[corner_edge].origin = out_vertex;
+                                self.halfedges[exiting_edge_twin].origin = corner;
+                                self.halfedges[exiting_edge].next = corner_edge;
+                                out_vertex = corner;
+                                exiting_edge = corner_edge;
+                            }
+                        }
                         let (bbox_edge, bbox_edge_twin) = self.create_twins();
                         let exiting_edge_twin = self.halfedges[exiting_edge].twin;
                         self.halfedges[bbox_edge].origin = out_vertex;
@@ -240,15 +303,19 @@ impl Dcel {
                         self.halfedges[bbox_edge].next = edge;
                         self.halfedges[exiting_edge].next = bbox_edge;
                         self.halfedges[exiting_edge_twin].origin = out_vertex;
+                        self.faces[i] = edge;
                         break;
                     }
                 }
 
                 prev_edge = edge;
                 edge = next;
-                if edge == face {
+                if edge == starting_edge {
                     // We're back to the beginning, we're done
+                    println!("Back to beginning");
                     break;
+                } else {
+                    println!("Looking at edge {}", edge);
                 }
             }
 
@@ -329,11 +396,40 @@ fn is_inside(x: f64, y: f64, bbox: &BoundingBox) -> bool {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum BoundResult {
     Inside,
     Outside,
-    Intersect { x: f64, y: f64 }
+    Intersect { x: f64, y: f64, side: BoundSide }
+}
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum BoundSide {
+    Left,
+    Right,
+    Top,
+    Bottom
+}
+
+fn corners_between(side1: BoundSide, side2: BoundSide, bbox: &BoundingBox) -> Vec<(f64, f64)> {
+    let bottom_left = (bbox.min_x, bbox.min_y);
+    let bottom_right = (bbox.max_x, bbox.min_y);
+    let top_right = (bbox.max_x, bbox.max_y);
+    let top_left = (bbox.min_x, bbox.max_y);
+    match (side1, side2) {
+        (BoundSide::Top, BoundSide::Left) => vec![top_left],
+        (BoundSide::Top, BoundSide::Bottom) => vec![top_left, bottom_left],
+        (BoundSide::Top, BoundSide::Right) => vec![top_left, bottom_left, bottom_right],
+        (BoundSide::Left, BoundSide::Bottom) => vec![bottom_left],
+        (BoundSide::Left, BoundSide::Right) => vec![bottom_left, bottom_right],
+        (BoundSide::Left, BoundSide::Top) => vec![bottom_left, bottom_right, top_right],
+        (BoundSide::Bottom, BoundSide::Right) => vec![bottom_right],
+        (BoundSide::Bottom, BoundSide::Top) => vec![bottom_right, top_right],
+        (BoundSide::Bottom, BoundSide::Left) => vec![bottom_right, top_right, top_left],
+        (BoundSide::Right, BoundSide::Top) => vec![top_right],
+        (BoundSide::Right, BoundSide::Left) => vec![top_right, top_left],
+        (BoundSide::Right, BoundSide::Bottom) => vec![top_right, top_left, bottom_left],
+        _ => vec![]
+    }
 }
 
 fn bound(segment: LineSegment, bbox: &BoundingBox) -> BoundResult {
@@ -346,6 +442,7 @@ fn bound(segment: LineSegment, bbox: &BoundingBox) -> BoundResult {
 
     let starts_inside = is_inside(segment.start_x, segment.start_y, bbox);
     let ends_inside = is_inside(segment.end_x, segment.end_y, bbox);
+    println!("{} {} Starts: {}, {} {} Ends: {}", segment.start_x, segment.start_y, starts_inside, segment.end_x, segment.end_y, ends_inside);
 
     if starts_inside && ends_inside {
         // Case 1: completely inside
@@ -365,11 +462,21 @@ fn bound(segment: LineSegment, bbox: &BoundingBox) -> BoundResult {
         let tx = if equals_with_epsilon(dx, 0.) { std::f64::MAX } else { (test_x - segment.start_x) / dx };
         let ty = if equals_with_epsilon(dy, 0.) { std::f64::MAX } else { (test_y - segment.start_y) / dy };
 
-        let tmax = if tx < ty { tx } else { ty };
-        let end_x = segment.start_x + dx * tmax;
-        let end_y = segment.start_y + dy * tmax;
+        let tmin = if tx < ty { tx } else { ty };
+        let end_x = segment.start_x + dx * tmin;
+        let end_y = segment.start_y + dy * tmin;
 
-        BoundResult::Intersect { x: end_x, y: end_y }
+        let side = if dx < 0. && dy < 0. {
+            if tx < ty { BoundSide::Left } else { BoundSide::Bottom }
+        } else if dx < 0. && dy > 0. {
+            if tx < ty { BoundSide::Left } else { BoundSide::Top }
+        } else if dx > 0. && dy > 0. {
+            if tx < ty { BoundSide::Right } else { BoundSide::Top }
+        } else /*if dx > 0. && dy < 0.*/ {
+            if tx < ty { BoundSide::Right } else { BoundSide::Bottom }
+        };
+
+        BoundResult::Intersect { x: end_x, y: end_y, side }
     } else if !starts_inside && ends_inside {
         // Case 4: starts outside and ends inside
         // Just do case 3 backward
@@ -387,7 +494,17 @@ fn bound(segment: LineSegment, bbox: &BoundingBox) -> BoundResult {
         let start_x = segment.end_x + dx * tmax;
         let start_y = segment.end_y + dy * tmax;
 
-        BoundResult::Intersect { x: start_x, y: start_y }
+        let side = if dx < 0. && dy < 0. {
+            if tx < ty { BoundSide::Left } else { BoundSide::Bottom }
+        } else if dx < 0. && dy > 0. {
+            if tx < ty { BoundSide::Left } else { BoundSide::Top }
+        } else if dx > 0. && dy > 0. {
+            if tx < ty { BoundSide::Right } else { BoundSide::Top }
+        } else /*if dx > 0. && dy < 0.*/ {
+            if tx < ty { BoundSide::Right } else { BoundSide::Bottom }
+        };
+
+        BoundResult::Intersect { x: start_x, y: start_y, side }
     } else {
         // Impossible
         BoundResult::Outside
@@ -396,15 +513,15 @@ fn bound(segment: LineSegment, bbox: &BoundingBox) -> BoundResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::dcel::{Dcel, bound, LineSegment, BoundingBox, BoundResult};
+    use crate::dcel::{Dcel, bound, LineSegment, BoundingBox, BoundResult, BoundSide};
     use crate::math_helpers::{equals_with_epsilon};
 
     #[test]
     fn it_bounds_segments() {
         fn result_equal(s1: BoundResult, s2: BoundResult) -> bool {
-            if let BoundResult::Intersect { x: x1, y: y1 } = s1 {
-                if let BoundResult::Intersect { x: x2, y: y2 } = s2 {
-                    return equals_with_epsilon(x1, x2) && equals_with_epsilon(y1, y2);
+            if let BoundResult::Intersect { x: x1, y: y1, side: side1 } = s1 {
+                if let BoundResult::Intersect { x: x2, y: y2, side: side2 } = s2 {
+                    return equals_with_epsilon(x1, x2) && equals_with_epsilon(y1, y2) && side1 == side2;
                 }
             }
             s1 == s2
@@ -418,14 +535,16 @@ mod tests {
 
         assert!(result_equal(bound(segment1, &bbox), BoundResult::Intersect {
             x: 5.,
-            y: -10.
+            y: -10.,
+            side: BoundSide::Bottom
         }));
 
         assert!(result_equal(bound(segment2, &bbox), BoundResult::Inside));
 
         assert!(result_equal(bound(segment3, &bbox), BoundResult::Intersect {
             x: 10.,
-            y: 5.
+            y: 5.,
+            side: BoundSide::Right
         }));
 
         assert!(result_equal(bound(segment4, &bbox), BoundResult::Outside));

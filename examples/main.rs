@@ -106,5 +106,5 @@ fn main() {
         InputSite { x: 291.6584696700909, y: 249.39222167310558 }
     ];
 
-    Voronoi::build(sites);
+    Voronoi::build(sites, 0., 0., 1280., 400.);
 }
