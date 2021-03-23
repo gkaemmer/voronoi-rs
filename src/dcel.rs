@@ -84,7 +84,7 @@ impl Dcel {
         for i in 0..(self.halfedges.len() / 2) {
             let edge = i * 2;
             let twin = i * 2 + 1;
-            if self.halfedges[edge].origin != NIL && self.halfedges[twin].origin != NIL {
+            if self.halfedges[edge].active && self.halfedges[edge].origin != NIL && self.halfedges[twin].origin != NIL {
                 let from = &self.vertices[self.halfedges[edge].origin];
                 let to = &self.vertices[self.halfedges[twin].origin];
                 edges.push((from.x, from.y, to.x, to.y));
@@ -95,24 +95,32 @@ impl Dcel {
 
     pub fn get_polygons(&self) -> Vec<Vec<(f64, f64)>> {
         let mut polygons = Vec::with_capacity(self.faces.len());
-        for face in &self.faces {
-            let mut edge = *face;
+        let face_count = self.faces.len();
+        for i in 0..face_count {
+            let face = self.faces[i];
+            let mut edge = face;
             let mut polygon = Vec::new();
+            let mut last_x = std::f64::MAX;
+            let mut last_y = std::f64::MAX;
             loop {
                 if edge == NIL || self.halfedges[edge].origin == NIL {
                     break;
                 }
                 let vertex = &self.vertices[self.halfedges[edge].origin];
-                polygon.push((vertex.x, vertex.y));
+                if !equals_with_epsilon(vertex.x, last_x) || !equals_with_epsilon(vertex.y, last_y) {
+                    polygon.push((vertex.x, vertex.y));
+                }
                 edge = self.halfedges[edge].next;
+                last_x = vertex.x;
+                last_y = vertex.y;
 
                 // println!("Building {} {} ", edge, face);
-                if edge == *face {
+                if edge == face {
                     break;
                 }
             }
 
-            if edge == *face {
+            if edge == face {
                 // We made it back to the first point, so we have a full polygon
                 polygons.push(polygon);
             } else {
@@ -185,7 +193,6 @@ impl Dcel {
 
             // We now have an edge to start at
             let mut state = 0; // Inside bbox
-            let mut prev_edge = NIL;
             let mut edge = starting_edge;
             let mut exiting_edge = NIL;
             let mut out_vertex = NIL;
@@ -219,23 +226,6 @@ impl Dcel {
                         exiting_edge = edge;
                         exiting_side = side;
                     }
-                    if result == BoundResult::Outside {
-                        println!("Inside to outside");
-                        state = 1;
-                        self.halfedges[edge].active = false;
-                        out_vertex = self.halfedges[edge].origin;
-                        exiting_edge = prev_edge;
-                        let Vertex { x, y } = self.vertices[out_vertex];
-                        exiting_side = if equals_with_epsilon(x, bbox.max_x) {
-                            BoundSide::Right
-                        } else if equals_with_epsilon(x, bbox.min_x) {
-                            BoundSide::Left
-                        } else if equals_with_epsilon(y, bbox.min_y) {
-                            BoundSide::Top
-                        } else {
-                            BoundSide::Bottom
-                        };
-                    }
                 } else {
                     // State is OUTSIDE
                     println!("Looking for entrance: {:?}", result);
@@ -244,11 +234,13 @@ impl Dcel {
                         if side != exiting_side {
                             for (corner_x, corner_y) in corners_between(exiting_side, side, &bbox) {
                                 let corner = self.create_vertex(corner_x, corner_y);
-                                let (corner_edge, _) = self.create_twins();
+                                let (corner_edge, corner_edge_twin) = self.create_twins();
                                 let exiting_edge_twin = self.halfedges[exiting_edge].twin;
-                                self.halfedges[corner_edge].origin = out_vertex;
-                                self.halfedges[exiting_edge_twin].origin = corner;
+                                println!("Editing edge {} w corner", exiting_edge_twin);
                                 self.halfedges[exiting_edge].next = corner_edge;
+                                self.halfedges[exiting_edge_twin].origin = out_vertex;
+                                self.halfedges[corner_edge].origin = out_vertex;
+                                self.halfedges[corner_edge_twin].origin = corner;
                                 out_vertex = corner;
                                 exiting_edge = corner_edge;
                             }
@@ -269,46 +261,8 @@ impl Dcel {
                         self.faces[i] = entering_edge;
                         break;
                     }
-
-                    if result == BoundResult::Inside {
-                        println!("Outside to inside");
-                        // Jumped inside, this is actually an easier case
-                        let in_vertex = self.halfedges[edge].origin;
-                        let Vertex { x, y } = self.vertices[in_vertex];
-                        let side = if equals_with_epsilon(x, bbox.max_x) {
-                            BoundSide::Right
-                        } else if equals_with_epsilon(x, bbox.min_x) {
-                            BoundSide::Left
-                        } else if equals_with_epsilon(y, bbox.min_y) {
-                            BoundSide::Top
-                        } else {
-                            BoundSide::Bottom
-                        };
-                        if side != exiting_side {
-                            for (corner_x, corner_y) in corners_between(exiting_side, side, &bbox) {
-                                let corner = self.create_vertex(corner_x, corner_y);
-                                let (corner_edge, _) = self.create_twins();
-                                let exiting_edge_twin = self.halfedges[exiting_edge].twin;
-                                self.halfedges[corner_edge].origin = out_vertex;
-                                self.halfedges[exiting_edge_twin].origin = corner;
-                                self.halfedges[exiting_edge].next = corner_edge;
-                                out_vertex = corner;
-                                exiting_edge = corner_edge;
-                            }
-                        }
-                        let (bbox_edge, bbox_edge_twin) = self.create_twins();
-                        let exiting_edge_twin = self.halfedges[exiting_edge].twin;
-                        self.halfedges[bbox_edge].origin = out_vertex;
-                        self.halfedges[bbox_edge_twin].origin = self.halfedges[edge].origin;
-                        self.halfedges[bbox_edge].next = edge;
-                        self.halfedges[exiting_edge].next = bbox_edge;
-                        self.halfedges[exiting_edge_twin].origin = out_vertex;
-                        self.faces[i] = edge;
-                        break;
-                    }
                 }
 
-                prev_edge = edge;
                 edge = next;
                 if edge == starting_edge {
                     // We're back to the beginning, we're done
@@ -400,7 +354,8 @@ fn is_inside(x: f64, y: f64, bbox: &BoundingBox) -> bool {
 enum BoundResult {
     Inside,
     Outside,
-    Intersect { x: f64, y: f64, side: BoundSide }
+    Intersect { x: f64, y: f64, side: BoundSide },
+    // DoubleIntersect { x1: f64, y1: f64, x2: f64, y2: f64, side1: BoundSide, side2: BoundSide }
 }
 #[derive(PartialEq, Clone, Copy, Debug)]
 enum BoundSide {
